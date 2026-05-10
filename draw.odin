@@ -129,7 +129,50 @@ draw_unit :: proc(
 
 		draw_filled_triangle(p1, p2, p3, color, zbuffer)
 	}
+}
 
+draw_flat_shaded :: proc(
+	vertices: []Vec3,
+	triangle: []Triangle,
+	project_mat: Mat4x4,
+	light: Light,
+	color: rl.Color,
+	zbuffer: ^ZBuffer,
+	ambient: f32 = 0.2,
+) {
+	for &tri in triangle {
+		v1 := vertices[tri[0]]
+		v2 := vertices[tri[1]]
+		v3 := vertices[tri[2]]
+
+		normal := normalize(cross(v2 - v1, v3 - v1))
+		// v in view space, that camera at [0,0,0]
+		camera_to_v := normalize(v1)
+
+		if dot(normal, camera_to_v) > 0 {
+			continue
+		}
+		ndc_p1 := to_ndc(project_mat, v1)
+		ndc_p2 := to_ndc(project_mat, v2)
+		ndc_p3 := to_ndc(project_mat, v3)
+
+		// fmt.printfln("{}, {}, {}", ndc_p1, ndc_p2, ndc_p3)
+		if (is_face_outside_frustum(ndc_p1, ndc_p2, ndc_p3)) do continue
+
+		p1 := to_screen(ndc_p1)
+		p2 := to_screen(ndc_p2)
+		p3 := to_screen(ndc_p3)
+
+		intensity := math.clamp(dot(normal, light.direction), ambient, 1.0)
+		shaded_color := rl.Color {
+			u8(f32(color.r) * intensity),
+			u8(f32(color.g) * intensity),
+			u8(f32(color.b) * intensity),
+			color.a,
+		}
+
+		draw_filled_triangle(p1, p2, p3, shaded_color, zbuffer)
+	}
 }
 
 draw_filled_triangle :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
@@ -185,7 +228,7 @@ fill_up :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
 	total_height := p3.y - p1.y
 
 	for i := p3.y; i >= p2.y; i -= 1 {
-		t := (i - p1.y) / total_height  // NOTE: Dont use slope accumulate way to do this, it cause floating point error, same as fill bottom
+		t := (i - p1.y) / total_height // NOTE: Dont use slope accumulate way to do this, it cause floating point error, same as fill bottom
 		l := #force_inline math.floor(p1.x + t * (p3.x - p1.x))
 		r := #force_inline math.floor(p2.x + t * (p3.x - p2.x))
 		for current_x := l; current_x <= r; current_x += 1 {

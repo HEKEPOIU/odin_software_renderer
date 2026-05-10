@@ -17,11 +17,12 @@ main :: proc() {
 	rotation := Vec3{0.0, 0.0, 0.0}
 	scale: f32 = 1.0
 
-	render_modes_count :: 3
+	render_modes_count :: 4
 	render_mode: i8 = render_modes_count - 1
 
 	projection := make_projection_mat(FOV, SCREEN_WIDTH, SCREEN_HEIGHT, NEAR_PLANE, FAR_PLANE)
 	cube := make_cube()
+	light := make_light({0.0, 1.0, 0.0}, 1.0)
 
 	zbuffer := new(ZBuffer)
 	for !rl.WindowShouldClose() {
@@ -45,6 +46,8 @@ main :: proc() {
 			draw_wireframe(cube.view_vertices, cube.triangles, projection, rl.GREEN, true)
 		case 2:
 			draw_unit(cube.view_vertices, cube.triangles, projection, rl.WHITE, zbuffer)
+		case 3:
+			draw_flat_shaded(cube.view_vertices, cube.triangles, projection,light, rl.WHITE, zbuffer)
 		}
 
 		rl.EndDrawing()
