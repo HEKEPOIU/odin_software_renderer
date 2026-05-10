@@ -38,7 +38,7 @@ dot_v4 :: proc(v1, v2: Vec4) -> f32 {
 	return v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2] + v1[3] * v2[3]
 }
 
-floor :: proc(v: ^Vec2) {
+floor_xy :: proc(v: ^Vec3) {
 	v.x, v.y  = math.floor(v.x), math.floor(v.y)
 }
 

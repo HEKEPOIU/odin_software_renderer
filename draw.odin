@@ -2,6 +2,7 @@ package main
 
 import "core:fmt"
 import "core:math"
+import "core:sort"
 import rl "vendor:raylib"
 
 
@@ -18,17 +19,15 @@ is_backface :: proc(v1, v2, v3: Vec3) -> bool {
 
 to_ndc :: proc(mat: Mat4x4, v: Vec3) -> Vec3 {
 	clip := mat * Vec4{v.x, v.y, v.z, 1}
-	// fmt.println("view_z:", v.z, "clip_z:", clip.z, "clip_w:", clip.w, "ndc_z:", clip.z/clip.w)
 	ndc := clip.xyz / clip.w
 
-	// return Vec3{clip.x / clip.w, clip.y / clip.w, 1 / clip.w}
-	return ndc
+	return Vec3{clip.x / clip.w, clip.y / clip.w, 1 / clip.w}
 }
 
-to_screen :: proc(ndc: Vec3) -> Vec2 {
+to_screen :: proc(ndc: Vec3) -> Vec3 {
 	screen_x := ((ndc.x + 1) * 0.5) * SCREEN_WIDTH
 	screen_y := ((ndc.y + 1) * 0.5) * SCREEN_HEIGHT
-	return {screen_x, screen_y}
+	return {screen_x, screen_y, ndc.z}
 }
 
 is_face_outside_frustum :: proc(ndc_p1, ndc_p2, ndc_p3: Vec3) -> bool {
@@ -49,7 +48,7 @@ is_face_outside_frustum :: proc(ndc_p1, ndc_p2, ndc_p3: Vec3) -> bool {
 	return false
 }
 
-draw_line :: proc(p1, p2: Vec2, color: rl.Color) {
+draw_line :: proc(p1, p2: Vec3, color: rl.Color) {
 	dx := p2.x - p1.x
 	dy := p2.y - p1.y
 	abs_dx := math.abs(dx)
@@ -130,67 +129,75 @@ draw_unit :: proc(
 
 }
 
-draw_filled_triangle :: proc(p1, p2, p3: Vec2, color: rl.Color, zbuffer: ^ZBuffer) {
-	ps := []Vec2{p1, p2, p3}
-	sort(ps)
+draw_filled_triangle :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
+	ps := []Vec3{p1, p2, p3}
+
+	sort.quick_sort_proc(ps, proc(p1, p2: Vec3) -> int {
+		return sort.compare_f32s(p1.y, p2.y)
+	})
 	p1, p2, p3 := ps[0], ps[1], ps[2]
 
-	floor(&p1)
-	floor(&p2)
-	floor(&p3)
+	floor_xy(&p1)
+	floor_xy(&p2)
+	floor_xy(&p3)
 
 	if p2.y == p3.y {
-		#force_inline fill_bottom(p1, p2, p3, color)
+		#force_inline fill_bottom(p1, p2, p3, color, zbuffer)
 	} else if p1.y == p2.y {
-		#force_inline fill_up(p1, p2, p3, color)
+		#force_inline fill_up(p1, p2, p3, color, zbuffer)
 	} else {
-		p4 := Vec2{p1.x + (p2.y - p1.y) * (p3.x - p1.x) / (p3.y - p1.y), p2.y}
-		#force_inline fill_bottom(p1, p2, p4, color)
-		#force_inline fill_up(p2, p4, p3, color)
+		t := (p2.y - p1.y) / (p3.y - p1.y)
+		p4 := Vec3{p1.x + t * (p3.x - p1.x), p2.y, (p3.z - p1.z) * t + p1.z}
+		#force_inline fill_bottom(p1, p2, p4, color, zbuffer)
+		#force_inline fill_up(p2, p4, p3, color, zbuffer)
 	}
-
-
 }
 
 
-fill_bottom :: proc(p1, p2, p3: Vec2, color: rl.Color) {
+fill_bottom :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
 	p2, p3 := p2, p3
 	if p3.x < p2.x {
 		p2, p3 = p3, p2
 	}
-	m_l := (p2.x - p1.x) / (p2.y - p1.y)
-	m_r := (p3.x - p1.x) / (p3.y - p1.y)
-	l, r := p1.x, p1.x
-
+	total_height := p3.y - p1.y
 	for i := p1.y; i <= p3.y; i += 1 {
-		lp := Vec2{l, i}
-		rp := Vec2{r, i}
-		draw_line(lp, rp, color)
-		l += m_l
-		r += m_r
+		t := (i - p1.y) / total_height
+		l := #force_inline math.floor(p1.x + t * (p2.x - p1.x))
+		r := #force_inline math.floor(p1.x + t * (p3.x - p1.x))
+
+		for current_x := l; current_x <= r; current_x += 1 {
+			current_p := Vec2{current_x, i}
+			weights := barycentric_weights(p1.xy, p2.xy, p3.xy, current_p)
+			z := 1 - (weights[0] * p1.z + weights[1] * p2.z + weights[2] * p3.z)
+			draw_with_ztest(Vec3{current_p.x, current_p.y, z}, color, zbuffer)
+		}
 	}
 }
 
-fill_up :: proc(p1, p2, p3: Vec2, color: rl.Color) {
+fill_up :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
 	p1, p2 := p1, p2
 	if p1.x > p2.x {
 		p1, p2 = p2, p1
 	}
-	m_l := (p1.x - p3.x) / (p1.y - p3.y)
-	m_r := (p2.x - p3.x) / (p2.y - p3.y)
-	l, r := p3.x, p3.x
+	total_height := p3.y - p1.y
 
 	for i := p3.y; i >= p2.y; i -= 1 {
-		lp := Vec2{l, i}
-		rp := Vec2{r, i}
-		draw_line(lp, rp, color)
-		l -= m_l
-		r -= m_r
+		t := (i - p1.y) / total_height  // NOTE: Dont use slope accumulate way to do this, it cause floating point error, same as fill bottom
+		l := #force_inline math.floor(p1.x + t * (p3.x - p1.x))
+		r := #force_inline math.floor(p2.x + t * (p3.x - p2.x))
+		for current_x := l; current_x <= r; current_x += 1 {
+			current_p := Vec2{current_x, i}
+			weights := barycentric_weights(p1.xy, p2.xy, p3.xy, current_p)
+			z := 1 - (weights[0] * p1.z + weights[1] * p2.z + weights[2] * p3.z)
+			draw_with_ztest(Vec3{current_p.x, current_p.y, z}, color, zbuffer)
+		}
+
 	}
 }
 
+
 is_point_outside_viewport :: proc(p: Vec2) -> bool {
-	return p.x < 0 || p.x > SCREEN_WIDTH || p.y < 0 || p.y > SCREEN_HEIGHT
+	return p.x < 0 || p.x >= SCREEN_WIDTH || p.y < 0 || p.y >= SCREEN_HEIGHT
 }
 
 barycentric_weights :: proc(a, b, c, p: Vec2) -> Vec3 {
@@ -199,5 +206,21 @@ barycentric_weights :: proc(a, b, c, p: Vec2) -> Vec3 {
 	pab_size2 := math.abs(cross_2d(a - b, p - b))
 	total := pbc_size2 + pac_size2 + pab_size2
 	return Vec3{pbc_size2, pac_size2, pab_size2} / total
+}
+
+draw_with_ztest :: proc(p: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
+	if is_point_outside_viewport(p.xy) do return
+	if ztest(p, zbuffer) {
+		rl.DrawPixelV(p.xy, color)
+		zbuffer[index_screen_p(p.xy)] = p.z
+	}
+}
+
+index_screen_p :: proc(p: Vec2) -> int {
+	return int(p.y) * SCREEN_WIDTH + int(p.x)
+}
+
+ztest :: proc(p: Vec3, zbuffer: ^ZBuffer) -> bool {
+	return zbuffer[index_screen_p(p.xy)] > p.z
 }
 

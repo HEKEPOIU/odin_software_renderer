@@ -23,16 +23,18 @@ main :: proc() {
 	projection := make_projection_mat(FOV, SCREEN_WIDTH, SCREEN_HEIGHT, NEAR_PLANE, FAR_PLANE)
 	cube := make_cube()
 
+	zbuffer := new(ZBuffer)
 	for !rl.WindowShouldClose() {
+		clear_zbuffer(zbuffer)
 		dt := rl.GetFrameTime()
 		handle_inputs(&translation, &rotation, &scale, &render_mode, render_modes_count, dt)
 		translation_mat := make_translate_mat(translation.x, translation.y, translation.z)
 		rotation_mat := make_rotation_mat_degree(rotation.x, rotation.y, rotation.z)
 		scale_mat := make_scale_mat(scale, scale, scale)
 
-		model_mat :=    translation_mat * rotation_mat* scale_mat
+		model_mat := translation_mat * rotation_mat * scale_mat
 		view_mat := make_view_mat(camera.position, camera.target)
-		mv_mat :=  view_mat * model_mat
+		mv_mat := view_mat * model_mat
 		apply_transform(cube.vertices, mv_mat, &cube.view_vertices)
 
 		rl.BeginDrawing()
@@ -41,8 +43,8 @@ main :: proc() {
 			draw_wireframe(cube.view_vertices, cube.triangles, projection, rl.GREEN, false)
 		case 1:
 			draw_wireframe(cube.view_vertices, cube.triangles, projection, rl.GREEN, true)
-		case 2: 
-			draw_unit(cube.view_vertices, cube.triangles, projection, rl.GREEN, nil)
+		case 2:
+			draw_unit(cube.view_vertices, cube.triangles, projection, rl.WHITE, zbuffer)
 		}
 
 		rl.EndDrawing()
