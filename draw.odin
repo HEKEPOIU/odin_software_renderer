@@ -1,6 +1,5 @@
 package main
 
-import "core:fmt"
 import "core:math"
 import "core:sort"
 import rl "vendor:raylib"
@@ -21,6 +20,10 @@ to_ndc :: proc(mat: Mat4x4, v: Vec3) -> Vec3 {
 	clip := mat * Vec4{v.x, v.y, v.z, 1}
 	ndc := clip.xyz / clip.w
 
+	// why we use 1/w here?
+	// it ok to use z/w for ztesting, it work well.
+	// but it not correct when we trying to interperlate between two point.
+	// clip.z in projection matrix are not liner.
 	return Vec3{clip.x / clip.w, clip.y / clip.w, 1 / clip.w}
 }
 
