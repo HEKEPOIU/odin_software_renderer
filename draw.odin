@@ -175,6 +175,106 @@ draw_flat_shaded :: proc(
 	}
 }
 
+draw_textured_flat_shaded :: proc(
+	vertices: []Vec3,
+	triangle: []Triangle,
+	uvs: []Vec2,
+	light: Light,
+	texture: Texture,
+	zbuffer: ^ZBuffer,
+	project_mat: Mat4x4,
+	ambient: f32 = 0.2,
+) {
+	for &tri in triangle {
+		v1 := vertices[tri[0]]
+		v2 := vertices[tri[1]]
+		v3 := vertices[tri[2]]
+
+		normal := normalize(cross(v2 - v1, v3 - v1))
+		// v in view space, that camera at [0,0,0]
+		camera_to_v := normalize(v1)
+
+		if dot(normal, camera_to_v) > 0 {
+			continue
+		}
+		ndc_p1 := to_ndc(project_mat, v1)
+		ndc_p2 := to_ndc(project_mat, v2)
+		ndc_p3 := to_ndc(project_mat, v3)
+
+		// fmt.printfln("{}, {}, {}", ndc_p1, ndc_p2, ndc_p3)
+		if (is_face_outside_frustum(ndc_p1, ndc_p2, ndc_p3)) do continue
+
+		p1 := to_screen(ndc_p1)
+		p2 := to_screen(ndc_p2)
+		p3 := to_screen(ndc_p3)
+
+		intensity := math.clamp(dot(normal, light.direction), ambient, 1.0)
+
+		draw_textured_triangle_flat_shaded(
+			p1,
+			p2,
+			p3,
+			uvs[tri[3]],
+			uvs[tri[4]],
+			uvs[tri[5]],
+			texture,
+			intensity,
+			zbuffer,
+		)
+	}
+}
+
+
+draw_textured_triangle_flat_shaded :: proc(
+	p1, p2, p3: Vec3,
+	uv1, uv2, uv3: Vec2,
+	texture: Texture,
+	intensity: f32,
+	zbuffer: ^ZBuffer,
+) {
+	Vertex_Zip :: struct {
+		point: Vec3,
+		uv:    Vec2,
+	}
+	zip: []Vertex_Zip = {{p1, uv1}, {p2, uv2}, {p3, uv3}}
+	sort.quick_sort_proc(zip, proc(p1, p2: Vertex_Zip) -> int {
+		return sort.compare_f32s(p1.point.y, p2.point.y)
+	})
+	p1, p2, p3 := zip[0].point, zip[1].point, zip[2].point
+	uv1, uv2, uv3 := zip[0].uv, zip[1].uv, zip[2].uv
+
+	floor_xy(&p1)
+	floor_xy(&p2)
+	floor_xy(&p3)
+
+	if p2.y == p3.y {
+		#force_inline fill_bottom(p1, p2, p3, uv1, uv2, uv3, texture, intensity, zbuffer)
+	} else if p1.y == p2.y {
+		#force_inline fill_up(p1, p2, p3, uv1, uv2, uv3, texture, intensity, zbuffer)
+	} else {
+		t := (p2.y - p1.y) / (p3.y - p1.y)
+		p4 := Vec3{p1.x + t * (p3.x - p1.x), p2.y, 0}
+		weights := barycentric_weights(p1.xy, p2.xy, p3.xy, p4.xy)
+		z := (weights[0] * p1.z + weights[1] * p2.z + weights[2] * p3.z)
+
+		p4.z = z
+		// screen point interperlate  are not equal to 3d space interperlate
+		// z = 1 / w
+		// a/w * w = a
+		uv4 :=
+			((uv1 * p1.z) * weights[0] +
+				(uv2 * p2.z) * weights[1] +
+				(uv3 * p3.z) * weights[2]) *
+			(1 / z)
+
+		#force_inline fill_bottom(p1, p2, p4, uv1, uv2, uv4, texture, intensity, zbuffer)
+		#force_inline fill_up(p2, p4, p3, uv2, uv4, uv3, texture, intensity, zbuffer)
+	}
+
+
+}
+
+
 draw_filled_triangle :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
 	ps := []Vec3{p1, p2, p3}
 
@@ -192,15 +292,30 @@ draw_filled_triangle :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffe
 	} else if p1.y == p2.y {
 		#force_inline fill_up(p1, p2, p3, color, zbuffer)
 	} else {
+
 		t := (p2.y - p1.y) / (p3.y - p1.y)
-		p4 := Vec3{p1.x + t * (p3.x - p1.x), p2.y, (p3.z - p1.z) * t + p1.z}
+		p4 := Vec3{p1.x + t * (p3.x - p1.x), p2.y, 0}
+		weights := barycentric_weights(p1.xy, p2.xy, p3.xy, p4.xy)
+		z := (weights[0] * p1.z + weights[1] * p2.z + weights[2] * p3.z)
+
+		p4.z = z
 		#force_inline fill_bottom(p1, p2, p4, color, zbuffer)
 		#force_inline fill_up(p2, p4, p3, color, zbuffer)
 	}
 }
 
 
-fill_bottom :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
+fill_bottom :: proc {
+	fill_bottom_flat,
+	fill_bottom_textured,
+}
+
+fill_up :: proc {
+	fill_up_flat,
+	fill_up_textured,
+}
+
+fill_bottom_flat :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
 	p2, p3 := p2, p3
 	if p3.x < p2.x {
 		p2, p3 = p3, p2
@@ -220,7 +335,56 @@ fill_bottom :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
 	}
 }
 
-fill_up :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
+fill_bottom_textured :: proc(
+	p1, p2, p3: Vec3,
+	uv1, uv2, uv3: Vec2,
+	texture: Texture,
+	intensity: f32,
+	zbuffer: ^ZBuffer,
+) {
+	p2, p3 := p2, p3
+	uv2, uv3 := uv2, uv3
+	if p3.x < p2.x {
+		p2, p3 = p3, p2
+		uv2, uv3 = uv3, uv2
+	}
+	total_height := p3.y - p1.y
+	for i := p1.y; i <= p3.y; i += 1 {
+		t := (i - p1.y) / total_height
+		l := #force_inline math.floor(p1.x + t * (p2.x - p1.x))
+		r := #force_inline math.floor(p1.x + t * (p3.x - p1.x))
+
+		for current_x := l; current_x <= r; current_x += 1 {
+			current_p := Vec2{current_x, i}
+			weights := barycentric_weights(p1.xy, p2.xy, p3.xy, current_p)
+			z := (weights[0] * p1.z + weights[1] * p2.z + weights[2] * p3.z)
+			one_sub_z := 1 - z
+
+			UV :=
+				((uv1 * p1.z) * weights[0] +
+					(uv2 * p2.z) * weights[1] +
+					(uv3 * p3.z) * weights[2]) *
+				(1 / z)
+
+			texX := i32(UV.x * f32(texture.width)) % texture.width
+			texY := i32(UV.y * f32(texture.height)) % texture.height
+
+			tex := texture.pixels[texY * texture.width + texX]
+
+			tex = rl.Color {
+				u8(f32(tex.r) * intensity),
+				u8(f32(tex.g) * intensity),
+				u8(f32(tex.b) * intensity),
+				tex.a,
+			}
+
+			draw_with_ztest(Vec3{current_p.x, current_p.y, one_sub_z}, tex, zbuffer)
+		}
+	}
+}
+
+
+fill_up_flat :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
 	p1, p2 := p1, p2
 	if p1.x > p2.x {
 		p1, p2 = p2, p1
@@ -236,6 +400,55 @@ fill_up :: proc(p1, p2, p3: Vec3, color: rl.Color, zbuffer: ^ZBuffer) {
 			weights := barycentric_weights(p1.xy, p2.xy, p3.xy, current_p)
 			z := 1 - (weights[0] * p1.z + weights[1] * p2.z + weights[2] * p3.z)
 			draw_with_ztest(Vec3{current_p.x, current_p.y, z}, color, zbuffer)
+		}
+
+	}
+}
+
+fill_up_textured :: proc(
+	p1, p2, p3: Vec3,
+	uv1, uv2, uv3: Vec2,
+	texture: Texture,
+	intensity: f32,
+	zbuffer: ^ZBuffer,
+) {
+
+	p1, p2 := p1, p2
+	uv1, uv2 := uv1, uv2
+	if p1.x > p2.x {
+		p1, p2 = p2, p1
+		uv1, uv2 = uv2, uv1
+	}
+	total_height := p3.y - p1.y
+
+	for i := p3.y; i >= p2.y; i -= 1 {
+		t := (i - p1.y) / total_height // NOTE: Dont use slope accumulate way to do this, it cause floating point error, same as fill bottom
+		l := #force_inline math.floor(p1.x + t * (p3.x - p1.x))
+		r := #force_inline math.floor(p2.x + t * (p3.x - p2.x))
+
+		for current_x := l; current_x <= r; current_x += 1 {
+			current_p := Vec2{current_x, i}
+			weights := barycentric_weights(p1.xy, p2.xy, p3.xy, current_p)
+			z := (weights[0] * p1.z + weights[1] * p2.z + weights[2] * p3.z)
+			one_sub_z := 1 - z
+			UV :=
+				((uv1 * p1.z) * weights[0] +
+					(uv2 * p2.z) * weights[1] +
+					(uv3 * p3.z) * weights[2]) *
+				(1 / z)
+
+			texX := i32(UV.x * f32(texture.width)) % texture.width
+			texY := i32(UV.y * f32(texture.height)) % texture.height
+
+			tex := texture.pixels[texY * texture.width + texX]
+			tex = rl.Color {
+				u8(f32(tex.r) * intensity),
+				u8(f32(tex.g) * intensity),
+				u8(f32(tex.b) * intensity),
+				tex.a,
+			}
+
+			draw_with_ztest(Vec3{current_p.x, current_p.y, one_sub_z}, tex, zbuffer)
 		}
 
 	}

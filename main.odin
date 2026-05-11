@@ -16,8 +16,9 @@ main :: proc() {
 	translation := Vec3{0.0, 0.0, 0.0}
 	rotation := Vec3{0.0, 0.0, 0.0}
 	scale: f32 = 1.0
+	texture := load_texture_form_file("assets/uv_checker.png")
 
-	render_modes_count :: 4
+	render_modes_count :: 5
 	render_mode: i8 = render_modes_count - 1
 
 	projection := make_projection_mat(FOV, SCREEN_WIDTH, SCREEN_HEIGHT, NEAR_PLANE, FAR_PLANE)
@@ -47,7 +48,24 @@ main :: proc() {
 		case 2:
 			draw_unit(cube.view_vertices, cube.triangles, projection, rl.WHITE, zbuffer)
 		case 3:
-			draw_flat_shaded(cube.view_vertices, cube.triangles, projection,light, rl.WHITE, zbuffer)
+			draw_flat_shaded(
+				cube.view_vertices,
+				cube.triangles,
+				projection,
+				light,
+				rl.WHITE,
+				zbuffer,
+			)
+		case 4:
+			draw_textured_flat_shaded(
+				cube.view_vertices,
+				cube.triangles,
+				cube.uvs,
+				light,
+				texture,
+				zbuffer,
+				projection,
+			)
 		}
 
 		rl.EndDrawing()
